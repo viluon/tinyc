@@ -88,3 +88,11 @@ project/plugins/project/
 ### Scala template
 *.class
 *.log
+
+### Custom
+# library build artifacts
+lib/libcommon.so
+lib/jtinyC.jar
+lib/libjtinyC.so
+lib/jtiny86.jar
+lib/libjtiny86.so

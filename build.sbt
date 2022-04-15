@@ -1,3 +1,6 @@
+import scala.language.postfixOps
+import scala.sys.process._
+
 name := "tinyc"
 
 version := "0.1"
@@ -15,3 +18,11 @@ libraryDependencies += "org.typelevel" %% "kittens" % "2.3.2"
 
 // For simulacrum
 scalacOptions += "-Ymacro-annotations"
+
+lazy val buildNativeDeps = taskKey[Unit]("Build native dependencies")
+buildNativeDeps := {
+  "./build-native-deps.sh" !
+}
+
+fork := true
+javaOptions += "-Djava.library.path=lib/"

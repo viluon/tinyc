@@ -39,5 +39,18 @@
     <orderEntry type="library" name="sbt: org.typelevel:kittens_2.13:2.3.2:jar" level="project" />
     <orderEntry type="library" name="sbt: org.typelevel:simulacrum-scalafix-annotations_2.13:0.5.4:jar" level="project" />
     <orderEntry type="library" name="sbt: org.typelevel:simulacrum_2.13:1.0.1:jar" level="project" />
+    <orderEntry type="module-library">
+      <library name="sbt: unmanaged-jars">
+        <CLASSES>
+          <root url="jar://$MODULE_DIR$/../../lib/jtiny86.jar!/" />
+          <root url="jar://$MODULE_DIR$/../../lib/jtinyC.jar!/" />
+          <root url="file://$MODULE_DIR$/../../lib/libcommon.so" />
+          <root url="file://$MODULE_DIR$/../../lib/libjtiny86.so" />
+          <root url="file://$MODULE_DIR$/../../lib/libjtinyC.so" />
+        </CLASSES>
+        <JAVADOC />
+        <SOURCES />
+      </library>
+    </orderEntry>
   </component>
 </module>
