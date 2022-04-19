@@ -1,22 +1,38 @@
 package me.viluon.tinyc
 
-import bindings.ASTTypeResolver.ASTTypeResolverExtensions
+import bindings.ASTBridge.ForeignASTBridgeOps
 
-import cats.syntax.option._
-import cats.data.{State, EitherT}
+import cats.data.{EitherT, State}
 import bindings.AST
 
+import cats.syntax.eq._
+import cats.syntax.show._
+import Type.eqType
+
+import cats.Show
+import me.viluon.tinyc.{Type => NativeType}
+
+// I use "native" to mean "native to this codebase." Things that come from C++
+// (via JNI) are typically named "foreign." I believe "native methods" are a misnomer.
+// (Otherwise, how is one to call non-native methods? Certainly not "foreign," right?)
+
 object TypeAnalysis {
-  case class TypeAnalysisState(declarations: Map[tinyc.Symbol, Type])
+  case class TypeAnalysisState(declarations: Map[tinyc.Symbol, NativeType])
   case class TypeError(msg: String, location: tinyc.SourceLocation)
+  implicit object TypeErrorShow extends Show[TypeError] {
+    override def show(t: TypeError): String = {
+      val (file, line, col) = (t.location.file(), t.location.line(), t.location.col())
+      s"$file:$line:$col: ${t.msg}"
+    }
+  }
 
   type Analysis[A] = EitherT[State[TypeAnalysisState, *], List[TypeError], A]
 
-  private def assign(sym: tinyc.Symbol, t: Type): Analysis[Unit] = EitherT.liftF(State.modify(
+  private def assign(sym: tinyc.Symbol, t: NativeType): Analysis[Unit] = EitherT.liftF(State.modify(
     s => s.copy(declarations = s.declarations + (sym -> t))
   ))
 
-  private def query(sym: tinyc.Symbol): Analysis[Option[Type]] = EitherT.liftF(State.inspect(
+  private def query(sym: tinyc.Symbol): Analysis[Option[NativeType]] = EitherT.liftF(State.inspect(
     s => s.declarations.get(sym)
   ))
 
@@ -26,30 +42,59 @@ object TypeAnalysis {
   @inline private def crash[A](msg: String, loc: tinyc.SourceLocation): Analysis[A] =
     EitherT.leftT(List(TypeError(msg, loc)))
 
+  @inline private def expect(b: Boolean, msg: => String, loc: => tinyc.SourceLocation): Analysis[Unit] =
+    if (b) pure(()) else crash(msg, loc)
+
   def analyse(ast: tinyc.AST): Either[List[TypeError], Map[tinyc.Symbol, Type]] =
     analyse(ast.wrapped).flatMap(_ => get).value.run(TypeAnalysisState(Map())).value._2.map(_.declarations)
 
-  // "not being of a type" (spelled None) actually means having the unit type, misnamed void in tinyC
-  def analyse(ast: AST): Analysis[Option[Type]] = ast match {
-    case _: AST.Integer => pure(Type.Int.some)
-    case _: AST.Double => pure(Type.Double.some)
-    case _: AST.Char => pure(Type.Char.some)
-    case _: AST.String => pure(Type.String.some)
+  def analyse(ast: AST): Analysis[NativeType] = ast match {
+    case _: AST.Integer => pure(NativeType.Int())
+    case _: AST.Double => pure(NativeType.Double())
+    case _: AST.Char => pure(NativeType.Char())
+    case _: AST.String => pure(NativeType.String())
     case id: AST.Identifier => for {
       mt <- query(id.symbol)
       t <- mt match {
+        case Some(t) => pure(t)
         case None => crash(s"undefined $id", id.loc)
-        case someT => pure(someT)
       }
     } yield t
     case _: AST.Type => ???
     case _: AST.PointerType => ???
     case _: AST.ArrayType => ???
     case _: AST.NamedType => ???
-    case _: AST.Sequence => ???
-    case block: AST.Block => ???
-    case _: AST.VarDecl => ???
-    case _: AST.FunDecl => ???
+    case seq: AST.Sequence => seq.body.foldLeft(pure[Type](Type.Unit())) { (acc, stmt) =>
+      for {
+        _ <- acc
+        t <- analyse(stmt)
+      } yield t
+    }
+    case block: AST.Block => block.stmts.foldLeft(pure[Type](Type.Unit())) { (acc, stmt) =>
+      for {
+        _ <- acc
+        t <- analyse(stmt)
+      } yield t
+    }
+    case decl: AST.VarDecl => for {
+      _ <- assign(decl.ident.symbol, decl.typ)
+      t <- analyse(decl.value)
+      _ <- expect(
+        decl.typ === t,
+        s"Expected ${decl.typ.show}, got ${t.show}",
+        decl.loc
+      )
+    } yield NativeType.Unit()
+    case fn: AST.FunDecl => for {
+      // TODO: add params to the scope
+      t <- analyse(fn.body)
+      _ <- expect(
+        fn.returnType === t,
+        s"Expected ${fn.returnType.show}, got ${t.show}",
+        // FIXME: return could appear elsewhere
+        fn.body.stmts.last.loc
+      )
+    } yield NativeType.Unit()
     case _: AST.StructDecl => ???
     case _: AST.FunPtrDecl => ???
     case _: AST.If => ???
@@ -59,8 +104,16 @@ object TypeAnalysis {
     case _: AST.For => ???
     case _: AST.Break => ???
     case _: AST.Continue => ???
-    case _: AST.Return => ???
-    case _: AST.BinaryOp => ???
+    case ret: AST.Return => analyse(ret.value)
+    case bin: AST.BinaryOp => for {
+      tl <- analyse(bin.left)
+      tr <- analyse(bin.right)
+      _ <- expect(
+        tl === tr,
+        s"Arguments to '${bin.op}' must have identical types, $tl and $tr are not identical.",
+        bin.loc
+      )
+    } yield tl
     case _: AST.Assignment => ???
     case _: AST.UnaryOp => ???
     case _: AST.UnaryPostOp => ???
