@@ -8,4 +8,15 @@ class FFITest extends AnyFlatSpec {
     val ast = frontend.parse("void main() {}")
     println(ast.toString)
   }
+
+  "JVM" should "not crash" in {
+    val ast = new tinyc.Frontend().parse(
+      """void main() {
+        |  int x;
+        |  return x + 1;
+        |}
+        |""".stripMargin
+    )
+    println(ast)
+  }
 }
