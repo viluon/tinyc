@@ -10,6 +10,6 @@ class ConstantsTest extends E2ETest {
         |  return 42;
         |}
         |""".stripMargin
-    )) shouldBe 0 // FIXME
+    )) shouldBe 42
   }
 }

@@ -14,6 +14,6 @@ object IRNode {
                        signature: List[IRType],
                        body: List[IRNode[B]],
                        cont: Continuation[B],
-                       callingConvention: CallingConvention = CallingConvention.None()
+                       callingConvention: CallingConvention = CallingConvention.Unrestricted()
                      ) extends IRNode[B]
 }

@@ -3,5 +3,5 @@ package ir
 
 sealed trait CallingConvention
 object CallingConvention {
-  case class None() extends CallingConvention
+  case class Unrestricted() extends CallingConvention
 }
