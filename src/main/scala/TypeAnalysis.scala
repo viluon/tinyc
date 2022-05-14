@@ -9,6 +9,7 @@ import cats.syntax.eq._
 import cats.syntax.show._
 import Type.eqType
 
+import cats.implicits.toTraverseOps
 import cats.Show
 import me.viluon.tinyc.{Type => NativeType}
 
@@ -64,18 +65,8 @@ object TypeAnalysis {
     case _: AST.PointerType => ???
     case _: AST.ArrayType => ???
     case _: AST.NamedType => ???
-    case seq: AST.Sequence => seq.body.foldLeft(pure[Type](Type.Unit())) { (acc, stmt) =>
-      for {
-        _ <- acc
-        t <- analyse(stmt)
-      } yield t
-    }
-    case block: AST.Block => block.stmts.foldLeft(pure[Type](Type.Unit())) { (acc, stmt) =>
-      for {
-        _ <- acc
-        t <- analyse(stmt)
-      } yield t
-    }
+    case seq: AST.Sequence => seq.body.traverse(analyse).map(_.lastOption.getOrElse(Type.Unit()))
+    case block: AST.Block => block.stmts.traverse(analyse).map(_.lastOption.getOrElse(Type.Unit()))
     case decl: AST.VarDecl => for {
       _ <- assign(decl.ident.symbol, decl.typ)
       t <- analyse(decl.value)

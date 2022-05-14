@@ -23,7 +23,9 @@ object AST {
 
   implicit val eqAST: Eq[AST] = semiauto.eq
 
-  case class Integer(foreign: tinyc.ASTInteger) extends AST
+  case class Integer(foreign: tinyc.ASTInteger) extends AST {
+    def v: Int = foreign.getValue.toInt
+  }
   implicit val eqForeignASTInteger: Eq[tinyc.ASTInteger] = Eq.fromUniversalEquals
   implicit val eqInteger: Eq[Integer] = semiauto.eq
 

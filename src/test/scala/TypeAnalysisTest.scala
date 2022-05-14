@@ -12,23 +12,26 @@ class TypeAnalysisTest extends AnyFlatSpec {
   lazy val frontend = new Frontend()
   def parse(@Language(value = "JAVA", prefix = "class Foo { ", suffix = " }") code: String): AST = frontend.parse(code)
 
-  def shouldFailWith(analysisResult: Either[List[TypeError], Map[Symbol, Type]], err: String): Unit = {
-    val res = analysisResult.left.map(_.map(_.show))
-    assert(res match {
-      case Left(errs) => errs.exists(_.toLowerCase.contains(err.toLowerCase))
-      case Right(_) => false
-    }, s"Could not find the appropriate error message in $res")
+  implicit class AnalysisResultOps(analysisResult: Either[List[TypeError], Map[Symbol, Type]]) {
+    def shouldFailWith(err: String): Unit = {
+      val res = analysisResult.left.map(_.map(_.show))
+      res match {
+        case Left(errs) => assert(
+          errs.exists(_.toLowerCase.contains(err.toLowerCase)),
+          s"Could not find the appropriate error message in $errs"
+        )
+        case Right(v) => fail(s"Unexpected success ($v)")
+      }
+    }
   }
 
   "Type analysis" should "understand integers" in {
-    val res = TypeAnalysis.analyse(parse(
+    TypeAnalysis analyse parse(
       """void main() {
         |  int x = 3;
         |  return x + 1;
         |}
         |""".stripMargin
-    ))
-    print(Console.RESET)
-    shouldFailWith(res, "expected void, got int")
+    ) shouldFailWith "expected void, got int"
   }
 }

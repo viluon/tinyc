@@ -18,6 +18,7 @@ libraryDependencies += "org.typelevel" %% "simulacrum" % "1.0.1"
 libraryDependencies += "org.typelevel" %% "cats-core" % "2.7.0"
 libraryDependencies += "org.typelevel" %% "kittens" % "2.3.2"
 libraryDependencies += "org.jetbrains" % "annotations" % "23.0.0"
+libraryDependencies += "com.monovore" %% "decline" % "2.2.0"
 
 // For simulacrum
 scalacOptions += "-Ymacro-annotations"
