@@ -20,18 +20,24 @@ object Lowering {
   // converter needs
   // - fresh register store
   // - environment
-  case class ConvState(regCtr: Int, env: Map[String, Int])
+  case class ConvState(
+                        regCtr: Int,
+                        env: Map[String, IRRegister],
+                        ir: List[BasicBlock] = Nil,
+                        currBlock: BasicBlock = IRNode.Block(Nil, Nil, Continuation.Halt())
+                      )
+
   type Converter[A] = StateT[Either[String, *], ConvState, A]
 
   private type BasicBlock = IRNode.Block[IRRegister]
   private type Expr = IRNode.IRExpression[IRRegister]
 
   def lowerTopLevel(ast: AST): Converter[IRProgram[IRRegister]] = ast match {
-    case b: AST.Block =>
-      b.stmts.traverse(lower).map(
-        _.map(_.asInstanceOf[BasicBlock])
-          .map(_.copy(callingConvention = CallingConvention.Function()))
-      ).map(IRProgram(_))
+    case b: AST.Block => for {
+      _ <- b.stmts.traverse(lower)
+      _ <- finalizeBlock
+      state <- get
+    } yield IRProgram(state.ir)
     case _ => crash(s"top level must be a block, which $ast certainly isn't")
   }
 
@@ -43,39 +49,55 @@ object Lowering {
   private def crash[A](msg: String): Converter[A] = StateT.liftF(Left(msg))
   private def fresh: Converter[IRRegister] = for {
     state <- get
-    ConvState(regCtr, _) = state
+    ConvState(regCtr, _, _, _) = state
     _ <- put(state.copy(regCtr = regCtr + 1))
-  } yield IRRegister(regCtr)
+  } yield IRRegister.IntReg(regCtr)
+
+  private def emit(instr: IRNode.IRExpression[IRRegister]): Converter[Unit] = {
+    import shapeless.lens
+
+    val currBlockBody = lens[ConvState].currBlock.body
+    modify(currBlockBody.modify(_)(body => instr :: body))
+  }
 
   private def bind(name: String, reg: IRRegister): Converter[Unit] = modify { s =>
-    s.copy(env = s.env + (name -> reg.n))
+    s.copy(env = s.env + (name -> reg))
   }
 
   private def lookup(name: String): Converter[IRRegister] = for {
     s <- get
     reg <- s.env.get(name) match {
-      case Some(n) => pure(IRRegister(n))
+      case Some(reg) => pure(reg)
       case None => crash(s"compiler bug: could not find $name in ${s.env}")
     }
   } yield reg
 
-  private def lower(ast: AST): Converter[IRNode[IRRegister]] = ast match {
-    case int: AST.Integer => pure(IRNode.KInt(int.v))
+  private def finalizeBlock: Converter[Unit] = modify { s =>
+    import shapeless.lens
+
+    val body = lens[BasicBlock].body
+    s.copy(ir = s.ir :+ body.modify(s.currBlock)(_.reverse), currBlock = IRNode.Block(Nil, Nil, Continuation.Halt()))
+  }
+
+  private def lower(ast: AST): Converter[IRRegister] = ast match {
+    case int: AST.Integer => for {
+      reg <- fresh
+      _ <- emit(IRNode.KInt(reg, int.v))
+    } yield reg
     case _: AST.Double => ???
     case _: AST.Char => ???
     case _: AST.String => ???
-    case id: AST.Identifier => lookup(id.name).map(IRNode.Load(_))
+    case id: AST.Identifier => lookup(id.name)
     case _: AST.Type => ???
     case _: AST.PointerType => ???
     case _: AST.ArrayType => ???
     case _: AST.NamedType => ???
-    case seq: AST.Sequence => seq.body.traverse(lower).flatMap(asBlock)
-    case b: AST.Block => b.stmts.traverse(lower).flatMap(asBlock)
+    case seq: AST.Sequence => seq.body.traverse(lower).map(_ => IRRegister.NoReg())
+    case b: AST.Block => b.stmts.traverse(lower).map(_ => IRRegister.NoReg())
     case vr: AST.VarDecl => for {
       // TODO this can't handle &x
-      reg <- fresh
       res <- lower(vr.value)
-      _ <- bind(vr.ident.name, reg)
+      _ <- bind(vr.ident.name, res)
     } yield res
     case fn: AST.FunDecl => lower(fn.body) // TODO
     case _: AST.StructDecl => ???
@@ -91,9 +113,7 @@ object Lowering {
     case bin: AST.BinaryOp => for {
       // FIXME ugliness
       l <- lower(bin.left)
-      l <- expressionify(List(l))
       r <- lower(bin.right)
-      r <- expressionify(List(r))
       op <- bin.op.name() match {
         case "+" => pure(BinaryOperator.Add())
         case "-" => pure(BinaryOperator.Sub())
@@ -101,7 +121,9 @@ object Lowering {
         case "/" => pure(BinaryOperator.Div())
         case invalid => crash(s"unknown binary operator $invalid")
       }
-    } yield IRNode.BinOp(op, l, r)
+      reg <- fresh
+      _ <- emit(IRNode.BinOp(reg, op, l, r))
+    } yield reg
     case _: AST.Assignment => ???
     case _: AST.UnaryOp => ???
     case _: AST.UnaryPostOp => ???

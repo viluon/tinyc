@@ -1,18 +1,22 @@
 package me.viluon.tinyc
 package e2e
 
+import org.intellij.lang.annotations.Language
 import org.scalatest.flatspec.AnyFlatSpec
-import tiny86.{Program, Target}
+import tiny86.{Program, Register, Target}
 
 abstract class E2ETest extends AnyFlatSpec {
+  def pipe(@Language(value = "JAVA", prefix = "class Foo { ", suffix = " }") code: String): Pipeline = Pipeline(code)
+
   def exec(pipe: Pipeline): Long = {
     import scala.jdk.CollectionConverters._
 
     val target = new Target()
-    val res = target.execute(pipe.run.get match {
-      case p: Program => p
+    val (program, outputReg) = pipe.run.get match {
+      case (p: Program, reg: Register) => p -> reg
       case _ => ???
-    }, true)
+    }
+    val res = target.execute(program, true)
 
     println(res.getStats)
     val snapshots = List.from(res.getSnapshots.asScala.map(_.asScala).map(Map.from(_)))
@@ -25,6 +29,6 @@ abstract class E2ETest extends AnyFlatSpec {
         .mkString("\n")
       )
     }
-    snapshots.last("Reg0")
+    snapshots.last(outputReg.toString)
   }
 }

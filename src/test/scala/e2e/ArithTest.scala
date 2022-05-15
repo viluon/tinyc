@@ -5,12 +5,13 @@ class ArithTest extends E2ETest {
   import org.scalatest.matchers.should.Matchers._
 
   "Integer arithmetic" should "compile & run" in {
-    exec(Pipeline(
+    exec(pipe(
       """int main() {
-        |  int x = 2 + 1;
+        |  int y = 5 * 8;
+        |  int x = 2 + y;
         |  return x;
         |}
         |""".stripMargin
-    )) shouldBe 4
+    )) shouldBe 42
   }
 }

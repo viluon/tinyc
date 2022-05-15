@@ -10,7 +10,7 @@ import cats.syntax.traverse.toTraverseOps
 object Tiny86 extends Target {
   import tiny86._
   import tiny86.{Register => MachineReg}
-  override type Code = Program
+  override type Code = (Program, MachineReg)
 
   // generator monad needs:
   // - fresh register store
@@ -137,33 +137,49 @@ object Tiny86 extends Target {
 
   override def emit(program: IRProgram[IRRegister]): Code = gen(program)
 
+  private def get: Generator[GenState] = StateT.get
+  private def put(n: GenState): Generator[Unit] = StateT.set(n)
+  private def modify(f: GenState => GenState): Generator[Unit] = StateT.modify(f)
   private def pure[A](x: A): Generator[A] = cats.Monad[Generator].pure(x)
   private def add(instr: Instruction): Generator[Unit] = StateT.liftF(Writer.tell(List(instr)))
-  private def fresh: Generator[MachineReg] = ???
-  private def lookup(register: IRRegister): Generator[MachineReg] = ???
+  private def fresh: Generator[MachineReg] = for {
+    s <- get
+    reg = new Register(s.regCtr)
+    _ <- put(s.copy(regCtr = s.regCtr + 1))
+  } yield reg
+  private def alloc(reg: IRRegister, mReg: MachineReg): Generator[Unit] =
+    modify { s => s.copy(allocation = s.allocation.updated(reg, mReg))}
+  private def lookup(register: IRRegister): Generator[MachineReg] = get.map(_.allocation(register))
+  private def lookupOrAlloc(reg: IRRegister): Generator[MachineReg] = get.map(_.allocation.get(reg)).flatMap {
+    case Some(mReg) => pure(mReg)
+    case None => for {
+      mReg <- fresh
+      _ <- alloc(reg, mReg)
+    } yield mReg
+  }
 
   private def gen(program: IRProgram[IRRegister]): Code = {
-    val (code, _) = program.fns.traverse(fn => for {
+    val (code, (_, last)) = program.fns.traverse(fn => for {
       _ <- pure(())
       IRNode.Block(signature, body, cont, callingConvention) = fn
-      _ <- body.traverse(translate)
-    } yield ()).run(GenState()).run
+      last <- body.traverse(translate)
+    } yield last).run(GenState()).run
 
     val builder = new ProgramBuilder()
     (code :+ new HALT()).foreach(builder.add)
-    builder.program()
+    builder.program() -> last.flatten.last
   }
 
   private def translate(node: IRExpression[IRRegister]): Generator[MachineReg] = node match {
-    case KInt(k) => for {
-      reg <- fresh
+    case KInt(irReg, k) => for {
+      reg <- lookupOrAlloc(irReg)
       _ <- add(new MOV(reg, k.toLong))
     } yield reg
-    case BinOp(op, left, right) =>
+    case BinOp(irReg, op, left, right) =>
       import BinaryOperator._
       for {
         l <- lookup(left)
-        reg <- fresh
+        reg <- lookupOrAlloc(irReg)
         _ <- add(new MOV(reg, l))
         r <- lookup(right)
         _ <- add(op match {
@@ -173,6 +189,5 @@ object Tiny86 extends Target {
           case Div() => new IDIV(reg, r) //  ditto
         })
       } yield reg
-    case IRNode.Load(target) => ???
   }
 }
