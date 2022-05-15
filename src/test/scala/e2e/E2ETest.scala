@@ -21,7 +21,7 @@ abstract class E2ETest extends AnyFlatSpec {
       println(aft
         .toList
         .sortBy(_._1)
-        .map { case (k, v) => s"${"%8s".formatted(k)} := $v" + (if (bef(k) != v) " <- changed" else "") }
+        .map { case (k, v) => ".%8s".formatted(k) + " := " + v + (if (bef(k) != v) " <- changed" else "") }
         .mkString("\n")
       )
     }

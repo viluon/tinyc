@@ -1,10 +1,10 @@
 package me.viluon.tinyc
 package codegen
 
-import ir.IRProgram
+import ir.{IRNode, IRProgram, IRRegister}
 
 trait Target {
   type Code
 
-  def emit(ir: IRProgram[Nothing]): Code
+  def emit(ir: IRProgram[IRRegister]): Code
 }

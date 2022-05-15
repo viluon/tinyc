@@ -1,7 +1,7 @@
 package me.viluon.tinyc
 
 import codegen.{Target, Tiny86}
-import ir.Lowering.{lower, lowerTopLevel}
+import ir.Lowering.{ConvState, lowerTopLevel}
 
 import org.intellij.lang.annotations.Language
 import tinyc.Frontend
@@ -17,7 +17,7 @@ case class Pipeline(@Language(value = "JAVA", prefix = "class Foo { ", suffix = 
   def run: Try[target.Code] = for {
     ast <- Try(Option(new Frontend().parse(src)).get.wrapped)
     _ <- TypeAnalysis.analyse(ast.foreign).left.map(errs => new IllegalStateException(errs.mkString("\n"))).toTry
-    ir <- lowerTopLevel(ast).left.map(new IllegalStateException(_)).toTry
+    ir <- lowerTopLevel(ast).run(ConvState(0, Map())).map(_._2).left.map(new IllegalStateException(_)).toTry
     code = target.emit(ir)
   } yield code
 }
