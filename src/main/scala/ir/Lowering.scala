@@ -159,11 +159,7 @@ object Lowering {
      * The non-terminated tail is returned separately.
      */
     def splitWithTerminators[B, C, M[_]: Monad](p: A => M[Either[B, C]]): M[(List[(List[B], C)], List[B])] = {
-      val iter = xs.iterator // smelly
-      // yeah :\ but I need to remember the position in xs and this is an easy way to do that
-      // feel free to make it pure instead :P (without ListBuffer and the iterator)
-      // no I meant you
-      // (:
+      val iter = xs.iterator
 
       def go(bs: ArrayBuffer[B]): M[Either[List[B], (List[B], C)]] =
         iter.nextOption().toRight(bs.toList).map(x => p(x).flatMap {
