@@ -6,32 +6,30 @@ import cats.syntax.all._
 
 import scala.collection.mutable
 
-case class IRProgram[B](start: IRNode.Block[B]) {
+case class IRProgram[B](entry: IRNode.BasicBlockID, blocks: Map[IRNode.BasicBlockID, IRNode.Block[B]]) {
   def toDot: String = {
     import collection.mutable
     val numbering = mutable.Map[Any, Int]()
     def nameOf(node: Any) = "node_" + numbering.getOrElseUpdate(node, numbering.size)
-    def blocks(b: IRNode.Block[B]): List[IRNode.Block[B]] = b :: (b.cont match {
-      case Continuation.Unconditional(next) => blocks(next)
+    def successors(b: IRNode.BasicBlockID): List[IRNode.BasicBlockID] = b :: (blocks(b).cont match {
+      case Continuation.Unconditional(next) => successors(next)
       case Continuation.Halt() => Nil
     })
     s"""digraph {
        |  ${nameOf(this)} [label="start"]
-       |  ${nameOf(this)} -> ${nameOf(start.body.head)}
-       |${blocks(start).map(_.toDot(nameOf)).mkString("\n").indent(2)}}""".stripMargin
+       |  ${nameOf(this)} -> ${nameOf(blocks(entry).body.head)}
+       |${successors(entry).map(blocks(_)).map(_.toDot(nameOf)).mkString("\n").indent(2)}}""".stripMargin
   }
 
-  lazy val collectBlocks: List[IRNode.Block[B]] = {
-    val blocks = mutable.Buffer(start)
-    var additions: mutable.Buffer[IRNode.Block[B]] = null
+  lazy val linearizedBlocks: List[IRNode.Block[B]] = {
+    val seq = mutable.Buffer(entry)
+    var additions: mutable.Buffer[IRNode.BasicBlockID] = null
     do {
-      additions = blocks.flatMap(_.successors).filterNot(blocks.contains)
-      blocks.addAll(additions)
+      additions = seq.flatMap(blocks(_).successors).filterNot(seq.contains)
+      seq.addAll(additions)
     } while (additions.nonEmpty)
-    blocks.toList
+    seq.map(blocks(_)).toList
   }
 
-  def traverse[A, M[_]](f: IRNode.Block[B] => M[A])(implicit m: Applicative[M]): M[List[A]] = collectBlocks.traverse(f)
-
-  def compose(other: IRProgram[B]): IRProgram[B] = ???
+  def traverse[A, M[_]](f: IRNode.Block[B] => M[A])(implicit m: Applicative[M]): M[List[A]] = linearizedBlocks.traverse(f)
 }

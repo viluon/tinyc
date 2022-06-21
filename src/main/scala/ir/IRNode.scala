@@ -35,13 +35,15 @@ sealed trait IRNode[Binding] {
 }
 
 object IRNode {
+  case class BasicBlockID(n: Int) // TODO maybe we want to add the origin?
+
   case class Block[B](
                        signature: List[IRType],
                        body: List[IRExpression[B]],
-                       cont: Continuation[B],
+                       cont: Continuation[B, BasicBlockID],
                        callingConvention: CallingConvention = CallingConvention.Unrestricted()
                      ) extends IRNode[B] {
-    def successors: List[Block[B]] = body.flatMap {
+    def successors: List[BasicBlockID] = body.flatMap {
       case KInt(_, _) |
            BinOp(_, _, _, _) => List()
     } ++ (cont match {
