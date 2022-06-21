@@ -101,7 +101,11 @@ object AST {
   implicit val eqForeignASTFunPtrDecl: Eq[tinyc.ASTFunPtrDecl] = Eq.fromUniversalEquals
   implicit val eqFunPtrDecl: Eq[FunPtrDecl] = semiauto.eq
 
-  case class If(foreign: tinyc.ASTIf) extends AST
+  case class If(foreign: tinyc.ASTIf) extends AST {
+    lazy val condition: AST = foreign.getCond.wrapped
+    lazy val consequent: AST = foreign.getTrueCase.wrapped
+    lazy val alternative: Option[AST] = Option(foreign.getFalseCase).map(_.wrapped)
+  }
   implicit val eqForeignASTIf: Eq[tinyc.ASTIf] = Eq.fromUniversalEquals
   implicit val eqIf: Eq[If] = semiauto.eq
 
@@ -143,7 +147,10 @@ object AST {
   implicit val eqForeignASTBinaryOp: Eq[tinyc.ASTBinaryOp] = Eq.fromUniversalEquals
   implicit val eqBinaryOp: Eq[BinaryOp] = semiauto.eq
 
-  case class Assignment(foreign: tinyc.ASTAssignment) extends AST
+  case class Assignment(foreign: tinyc.ASTAssignment) extends AST {
+    lazy val lvalue: AST = foreign.getLvalue.wrapped
+    lazy val rvalue: AST = foreign.getValue.wrapped
+  }
   implicit val eqForeignASTAssignment: Eq[tinyc.ASTAssignment] = Eq.fromUniversalEquals
   implicit val eqAssignment: Eq[Assignment] = semiauto.eq
 

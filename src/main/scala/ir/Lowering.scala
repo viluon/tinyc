@@ -5,7 +5,7 @@ import bindings.AST
 
 import cats.Monad
 import cats.data.StateT
-import cats.syntax.traverse.toTraverseOps
+import cats.syntax.all._
 
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
@@ -34,10 +34,10 @@ object Lowering {
 
   def lowerTopLevel(ast: AST): Converter[IRProgram[IRRegister]] = ast match {
     case b: AST.Block => for {
-      _ <- b.stmts.traverse(lower)
+      _ <- b.stmts.traverse_(lower)
       _ <- finalizeBlock
       state <- get
-    } yield IRProgram(state.ir)
+    } yield IRProgram(state.ir.head)
     case _ => crash(s"top level must be a block, which $ast certainly isn't")
   }
 
@@ -73,11 +73,23 @@ object Lowering {
   } yield reg
 
   private def finalizeBlock: Converter[Unit] = modify { s =>
-    import shapeless.lens
-
-    val body = lens[BasicBlock].body
+    val body = shapeless.lens[BasicBlock].body
     s.copy(ir = s.ir :+ body.modify(s.currBlock)(_.reverse), currBlock = IRNode.Block(Nil, Nil, Continuation.Halt()))
   }
+
+  private def setContinuation(continuation: Continuation[IRRegister]): Converter[Unit] = modify(
+    shapeless.lens[ConvState].currBlock.cont.set(_)(continuation)
+  )
+
+  /*
+  here's the (new) idea:
+  - each block has a signature, which is a unique ID and a parameter list
+  - during lowering, we fill in a map from IDs to signatures and actual blocks
+  - we also maintain predecessor and successor maps to ease variable bridging
+    (variables need to be forwarded through parameters but that's triggered by a pull
+    which cascades signature changes up to the definition site)
+  - everything refers to IDs to break up loops
+   */
 
   private def lower(ast: AST): Converter[IRRegister] = ast match {
     case int: AST.Integer => for {
@@ -102,7 +114,13 @@ object Lowering {
     case fn: AST.FunDecl => lower(fn.body) // TODO
     case _: AST.StructDecl => ???
     case _: AST.FunPtrDecl => ???
-    case _: AST.If => ???
+    case br: AST.If => for {
+      cond <- lower(br.condition)
+      consequent <- lowerBlock(br.consequent)
+      alternative <- lowerBlock(br.alternative)
+      _ <- setContinuation(Continuation.Branch(cond, consequent, alternative))
+      _ <- finalizeBlock
+    } yield ???
     case _: AST.Switch => ???
     case _: AST.While => ???
     case _: AST.DoWhile => ???
@@ -111,17 +129,23 @@ object Lowering {
     case _: AST.Continue => ???
     case ret: AST.Return => lower(ret.value) // TODO
     case bin: AST.BinaryOp => for {
-      // FIXME ugliness
-      l <- lower(bin.left)
-      r <- lower(bin.right)
-      op <- bin.op.name() match {
-        case "+" => pure(BinaryOperator.Add())
-        case "-" => pure(BinaryOperator.Sub())
-        case "*" => pure(BinaryOperator.Mul())
-        case "/" => pure(BinaryOperator.Div())
+      a <- lower(bin.left)
+      b <- lower(bin.right)
+      operation <- bin.op.name() match {
+        case "+" => pure(BinaryOperator.Add() -> false)
+        case "-" => pure(BinaryOperator.Sub() -> false)
+        case "*" => pure(BinaryOperator.Mul() -> false)
+        case "/" => pure(BinaryOperator.Div() -> false)
+        case "<" => pure(BinaryOperator.LessThan() -> false)
+        case "<=" => pure(BinaryOperator.LessOrEqual() -> false)
+        // FIXME flipping the arguments may pose problems with floats
+        case ">" => pure(BinaryOperator.LessThan() -> true)
+        case ">=" => pure(BinaryOperator.LessOrEqual() -> true)
         case invalid => crash(s"unknown binary operator $invalid")
       }
+      (op, flip) = operation
       reg <- fresh
+      (l, r) = if (flip) (b, a) else (a, b)
       _ <- emit(IRNode.BinOp(reg, op, l, r))
     } yield reg
     case _: AST.Assignment => ???
@@ -192,7 +216,7 @@ object Lowering {
       }
       val linkedBlocks = unlinkedBlocks.reverse.foldLeft(List[BasicBlock]()) {
         case (Nil, block) => List(block)
-        case (acc@(succ :: _), block) => block.copy(cont = Continuation.Unconditional(succ)) :: acc
+        case (acc@succ :: _, block) => block.copy(cont = Continuation.Unconditional(succ)) :: acc
       }
       (linkedBlocks, tail)
     }

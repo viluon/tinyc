@@ -40,7 +40,15 @@ object IRNode {
                        body: List[IRExpression[B]],
                        cont: Continuation[B],
                        callingConvention: CallingConvention = CallingConvention.Unrestricted()
-                     ) extends IRNode[B]
+                     ) extends IRNode[B] {
+    def successors: List[Block[B]] = body.flatMap {
+      case KInt(_, _) |
+           BinOp(_, _, _, _) => List()
+    } ++ (cont match {
+      case Continuation.Unconditional(next) => List(next)
+      case Continuation.Halt() => List()
+    })
+  }
 
   sealed trait IRExpression[B] extends IRNode[B] {
     /**

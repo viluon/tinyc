@@ -88,7 +88,17 @@ object TypeAnalysis {
     } yield NativeType.Unit()
     case _: AST.StructDecl => ???
     case _: AST.FunPtrDecl => ???
-    case _: AST.If => ???
+    case br: AST.If => for {
+      t <- analyse(br.condition)
+      _ <- expect(
+        t === NativeType.Int(),
+        s"If statements can only branch on integers, not on $t",
+        br.condition.loc
+      )
+      // TODO: scoping?
+      _ <- analyse(br.consequent)
+      _ <- br.alternative.traverse(analyse)
+    } yield NativeType.Unit()
     case _: AST.Switch => ???
     case _: AST.While => ???
     case _: AST.DoWhile => ???
@@ -105,7 +115,15 @@ object TypeAnalysis {
         bin.loc
       )
     } yield tl
-    case _: AST.Assignment => ???
+    case a: AST.Assignment => for {
+      tl <- analyse(a.lvalue)
+      tr <- analyse(a.rvalue)
+      _ <- expect(
+        tl === tr,
+        s"Cannot assign $tr to an lvalue of type $tl",
+        a.loc
+      )
+    } yield tr
     case _: AST.UnaryOp => ???
     case _: AST.UnaryPostOp => ???
     case _: AST.Address => ???

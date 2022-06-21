@@ -40,7 +40,7 @@ object Tiny86 extends Target {
   }
 
   private def gen(program: IRProgram[IRRegister]): Code = {
-    val (code, (_, last)) = program.fns.traverse(fn => for {
+    val (code, (_, last)) = program.traverse(fn => for {
       _ <- pure(())
       IRNode.Block(signature, body, cont, callingConvention) = fn
       last <- body.traverse(translate)
