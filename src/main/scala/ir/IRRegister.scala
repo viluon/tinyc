@@ -8,5 +8,5 @@ object IRRegister {
    */
   case class NoReg() extends IRRegister
   case class IntReg(n: Int) extends IRRegister
-  case class Param(i: Int, typ: Type) extends IRRegister
+  case class Param(i: Int, typ: IRType) extends IRRegister
 }

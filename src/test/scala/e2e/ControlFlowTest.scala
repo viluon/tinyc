@@ -42,4 +42,25 @@ class ControlFlowTest extends E2ETest {
         |""".stripMargin
     )) shouldBe 24
   }
+
+  it should "support nested if statements" in {
+    exec(pipe(
+      """int main() {
+        |  int x = 3;
+        |  if (x > 5) {
+        |    x = 0;
+        |  }
+        |  if (x < 5) {
+        |    x = 8;
+        |    if (x > 1) {
+        |      x = 0;
+        |    }
+        |    if (x <= 0) {
+        |      x = 42;
+        |    }
+        |  }
+        |  return x;
+        |}""".stripMargin
+    )) shouldBe 42
+  }
 }

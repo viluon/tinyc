@@ -42,7 +42,7 @@ object Tiny86 extends Target {
   private def gen(program: IRProgram[IRRegister]): Code = {
     val (code, (_, last)) = program.traverse(fn => for {
       _ <- pure(())
-      IRNode.Block(signature, body, cont, callingConvention) = fn
+      IRNode.Block(id, params, env, body, cont, callingConvention) = fn
       last <- body.traverse(translate)
     } yield last).run(GenState()).run
 
@@ -68,6 +68,7 @@ object Tiny86 extends Target {
           case Sub() => new SUB(reg, r)
           case Mul() => new IMUL(reg, r) // FIXME needs to follow type info
           case Div() => new IDIV(reg, r) //  ditto
+//          case LessThan() => new LEA(reg, r)
         })
       } yield reg
   }

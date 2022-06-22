@@ -12,7 +12,8 @@ case class IRProgram[B](entry: IRNode.BasicBlockID, blocks: Map[IRNode.BasicBloc
     val numbering = mutable.Map[Any, Int]()
     def nameOf(node: Any) = "node_" + numbering.getOrElseUpdate(node, numbering.size)
     def successors(b: IRNode.BasicBlockID): List[IRNode.BasicBlockID] = b :: (blocks(b).cont match {
-      case Continuation.Unconditional(next) => successors(next)
+      case Continuation.Branch(_, consequent, alternative) => successors(consequent.callee) ++ successors(alternative.callee)
+      case Continuation.Unconditional(next) => successors(next.callee)
       case Continuation.Halt() => Nil
     })
     s"""digraph {
