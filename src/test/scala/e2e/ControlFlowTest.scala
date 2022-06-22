@@ -13,7 +13,8 @@ class ControlFlowTest extends E2ETest {
          |  }
          |  return x;
          |}
-        |""".stripMargin
+        |""".stripMargin,
+      debugMode = true
     )) shouldBe 42
 
     exec(pipe(

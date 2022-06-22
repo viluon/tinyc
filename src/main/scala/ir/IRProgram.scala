@@ -7,19 +7,33 @@ import cats.syntax.all._
 import scala.collection.mutable
 
 case class IRProgram[B](entry: IRNode.BasicBlockID, blocks: Map[IRNode.BasicBlockID, IRNode.Block[B]]) {
-  def toDot: String = {
+  def toDot: DotGraph = {
     import collection.mutable
     val numbering = mutable.Map[Any, Int]()
     def nameOf(node: Any) = "node_" + numbering.getOrElseUpdate(node, numbering.size)
     def successors(b: IRNode.BasicBlockID): List[IRNode.BasicBlockID] = b :: (blocks(b).cont match {
       case Continuation.Branch(_, consequent, alternative) => successors(consequent.callee) ++ successors(alternative.callee)
       case Continuation.Unconditional(next) => successors(next.callee)
+      case Continuation.Return(_) => Nil
       case Continuation.Halt() => Nil
     })
-    s"""digraph {
-       |  ${nameOf(this)} [label="start"]
-       |  ${nameOf(this)} -> ${nameOf(blocks(entry).body.head)}
-       |${successors(entry).map(blocks(_)).map(_.toDot(nameOf)).mkString("\n").indent(2)}}""".stripMargin
+
+    val body = successors(entry).map(blocks(_)).map(_.toDot(nameOf))
+    DotGraph.Digraph(
+      Set(nameOf(this) -> Map("shape" -> "diamond", "label" -> "start")) ++ body.map {
+        case DotGraph.Subgraph(name, nodes, edges, props) =>
+          DotGraph.Subgraph(name, nodes, Set(), props).toString -> Map[String, String]()
+      },
+      Set((nameOf(this), "entry_" + nameOf(blocks(entry).id), Map("color" -> "lightslateblue"))) ++ body.flatMap(_.edges)
+    )
+  }
+
+  def display(): Unit = {
+    // run the Bash script to display the IR
+    val cmd = s"dot -Tpng -v | feh -"
+    val proc = Runtime.getRuntime.exec(Array("bash", "-c", cmd))
+    proc.getOutputStream.write(toDot.toString.getBytes)
+    proc.getOutputStream.close()
   }
 
   lazy val linearizedBlocks: List[IRNode.Block[B]] = {

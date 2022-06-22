@@ -1,17 +1,23 @@
 package me.viluon.tinyc
 package ir
 
+import DotGraph.{Digraph, Subgraph}
+
 sealed trait IRNode[Binding] {
-  def toDot(nameOf: Any => String): String = {
+  def toDot(nameOf: Any => String): DotGraph = {
     val name = nameOf(this)
     this match {
       case IRNode.Block(id, params, env, body, cont, callingConvention) =>
-        def controlFlowEdge(a: String, b: String): String = s"$a -> $b [color=lightslateblue]"
+        def controlFlowEdge(a: String, b: String, props: DotGraph.Props = Map()): DotGraph.Edge =
+          (a, b, Map("color" -> "lightslateblue") ++ props)
         val name = nameOf(id)
-        val contents = body.map(nameOf(_)).sliding(2).toList.map {
-          case List(x) => x
-          case List(fst, snd) => controlFlowEdge(fst, snd)
-        } ++ body.map(_.toDot(nameOf))
+        val spine = body.map(nameOf(_)).sliding(2).toList.flatMap {
+          case List(_) => List()
+          case List(fst, snd) => List(controlFlowEdge(fst, snd))
+        }
+        val contents = body.map(_.toDot(nameOf)).reduceOption[DotGraph] {
+          case (a, b) => Digraph(a.nodes union b.nodes, a.edges union b.edges)
+        }.getOrElse(Digraph(Set()))
 
         val blockKind = callingConvention match {
           case CallingConvention.Function() => "func"
@@ -19,41 +25,47 @@ sealed trait IRNode[Binding] {
         }
         val signature = params.mkString("(", ", ", ")")
         val envDict = env.map(p => p._1 + ": " + p._2).mkString(", ")
-        val outEdges = body.lastOption.map(last => cont.callees
-          .map(id => controlFlowEdge(nameOf(last), "entry_" + nameOf(id)))
-          .mkString("\n").indent(2)
-        ).getOrElse("")
-        val firstEdge = body.headOption.map(h => controlFlowEdge(s"entry_$name", nameOf(h))).getOrElse("")
+        val firstEdge = body.headOption.map(h => controlFlowEdge(s"entry_$name", nameOf(h)))
+        val outEdges = body.lastOption.map(last => {
+          val contType = cont match {
+            case Continuation.Unconditional(_) => "jmp"
+            case Continuation.Branch(_, _, _) => "br"
+            case Continuation.Return(_) => "ret"
+            case Continuation.Halt() => "halt"
+          }
+          cont.targets.zipWithIndex.map {
+            case (target, i) => controlFlowEdge(nameOf(last), "entry_" + nameOf(target.callee), Map(
+              "label" -> (contType + i + target.args.mkString(": ", ", ", "")),
+              "fontsize" -> "10.0",
+            ))
+          }
+        }).iterator.toSet.flatten
+        val entryNode = s"entry_$name" -> Map("shape" -> "point", "label" -> "")
 
-        s"""subgraph cluster_$name {
-           |  label="(${id.n}) $blockKind$signature with {$envDict}"
-           |  entry_$name [shape=diamond label=""]
-           |  $firstEdge
-           |${contents.mkString("\n").indent(2)}
-           |$outEdges}""".stripMargin
+        Subgraph(s"cluster_$name", contents.nodes + entryNode, outEdges ++ firstEdge ++ spine ++ contents.edges, Map(
+          "label" -> s"(${id.n}) $blockKind$signature with {$envDict}"
+        ))
 
-      case expr: IRNode.IRExpression[Binding] =>
-        def foo(deps: Any*) = {
-          s"""${nameOf(expr.target)} <- $name
-             |${deps.map(nameOf(_) + " -> " + name).mkString("\n")}
-             |""".stripMargin
-        }
-
-        expr match {
-          case IRNode.KInt(target, k) => s"$name [label=\"$target ← KInt $k\"]\n"
-          case IRNode.BinOp(target, op, l, r) =>
-            s"""$name [label="$target ← BinOp($op)"]
-               |${nameOf(l)} [label="$l"]
-               |${nameOf(r)} [label="$r"]
-               |${nameOf(l)} -> $name
-               |${nameOf(r)} -> $name
-               |""".stripMargin
-          case IRNode.Copy(target, source) =>
-            s"""$name [label="$target ← $source"]
-               |${nameOf(source)} [label="$source"]
-               |${nameOf(source)} -> $name
-               |""".stripMargin
-        }
+      case expr: IRNode.IRExpression[Binding] => expr match {
+        case IRNode.KInt(target, k) =>
+          Digraph(Set(name -> Map("label" -> s"$target ← KInt $k")))
+        case IRNode.BinOp(target, op, l, r) =>
+          Digraph(Set(
+            name -> Map("label" -> s"$target ← BinOp($op)"),
+            nameOf(l) -> Map("label" -> l.toString),
+            nameOf(r) -> Map("label" -> r.toString),
+          ), Set(
+            (nameOf(l), name, Map()),
+            (nameOf(r), name, Map()),
+          ))
+        case IRNode.Copy(target, source) =>
+          Digraph(Set(
+            name -> Map("label" -> s"$target ← $source"),
+            nameOf(source) -> Map("label" -> source.toString),
+          ), Set(
+            (nameOf(source), name, Map()),
+          ))
+      }
     }
   }
 }

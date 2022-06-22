@@ -171,7 +171,7 @@ object Lowering {
     /**
      * Lowering state local to a basic block.
      */
-    case class State(blockID: BasicBlockID, callConv: CallingConvention, env: Map[String, IRRegister], body: List[Expr])
+    case class State(blockID: BasicBlockID, params: List[IRType], callConv: CallingConvention, env: Map[String, IRRegister], body: List[Expr])
 
     private def get: BlockLocal[State] = StateT.get
     private def put(n: State): BlockLocal[Unit] = StateT.set(n)
@@ -199,7 +199,7 @@ object Lowering {
     def endWith[A](f: BasicBlockID => BlockLocal[(Cont, CallingConvention, A)]): BlockLocal[A] = for {
       nextID <- freshBlockID
       s <- get
-      _ <- put(State(nextID, CallingConvention.Unrestricted(), Map(), Nil))
+      _ <- put(State(nextID, Nil, CallingConvention.Unrestricted(), Map(), Nil))
       r <- f(nextID)
       (cont, callConv, a) = r
       block = IRNode.Block(s.blockID, List(), s.env, s.body.reverse, cont, s.callConv)
@@ -217,7 +217,7 @@ object Lowering {
     private def redirect(id: BasicBlockID, cont: Cont): BlockLocal[Unit] = {
       def successors(i: BasicBlockID): BlockLocal[Set[BasicBlockID]] = for {
         s <- StateT.liftF(Lowering.get)
-      } yield s.blocks(i).cont.callees
+      } yield s.blocks(i).cont.callees.toSet
 
       case class DfsState(visited: Set[BasicBlockID], stack: List[BasicBlockID])
       DfsState(Set(), List(id)).tailRecM(dfs => dfs.stack match {
@@ -239,22 +239,40 @@ object Lowering {
       })
     }
 
+    private def save: BlockLocal[Unit] = for {
+      s <- get
+      _ <- StateT.liftF(submitBlock(s.blockID, IRNode.Block(
+        s.blockID,
+        s.params,
+        s.env,
+        s.body.reverse,
+        Continuation.Halt(),  // FIXME we need to store successors here I'm afraid
+        s.callConv
+      )))
+    } yield ()
+
+    def load: BlockLocal[Unit] = for {
+      s <- get
+      irGenState <- StateT.liftF(Lowering.get)
+      block = irGenState.blocks(s.blockID)
+      _ <- put(State(
+        // FIXME this is a dangerous area since two states need to be kept in sync
+        s.blockID,
+        block.params,
+        block.callingConvention,
+        block.env,
+        block.body.reverse,
+      ))
+    } yield ()
+
     private def lowerBlock(id: BasicBlockID, stmts: List[AST], params: List[(String, IRType)]): BlockLocal[Unit] = for {
       // we first need to make sure the progress so far is visible to other computations
       s <- get
       _ = println("lower push from " + s.blockID)
-      block = IRNode.Block(
-        s.blockID,
-        List(),
-        s.env,
-        s.body.reverse,
-        Continuation.Halt(), // FIXME we need to store successors here I'm afraid
-        s.callConv
-      )
-      _ <- StateT.liftF(submitBlock(s.blockID, block))
+      _ <- save
       _ <- StateT.liftF(Lowering.lowerBlock(id, stmts, params))
       _ = println(s"lower pop ($id)")
-      // TODO and here we need to read the changes and apply them to the running state
+      _ <- load
     } yield ()
 
     /**
@@ -268,11 +286,14 @@ object Lowering {
 
     private def lookup(name: String): BlockLocal[IRRegister] = for {
       s <- get
+      _ <- save
       blockID = s.blockID
+      _ = println(s"lookup $name in $blockID")
       mbReg <- (s.env.get(name) match {
         case Some(reg) => pure(Some(reg))
         case None => StateT.liftF(forwardVariable(blockID, name))
       }): BlockLocal[Option[IRRegister]]
+      _ <- load
       reg <- mbReg match {
         case Some(reg) => pure(reg)
         case None =>
@@ -280,11 +301,17 @@ object Lowering {
           val nameOf = (x: Any) => "node_" + ns.getOrElseUpdate(x, ns.size)
           for {
             irGenState <- StateT.liftF(Lowering.get)
-            _ = println(irGenState.blocks.map(_._2.toDot(nameOf).indent(2)).mkString("\ndigraph {\n", "\n", "}"))
+            _ = println(irGenState.blocks.map(_._2.toDot(nameOf).toString.indent(2)).mkString("\ndigraph {\n", "\n", "}"))
             reg <- crash[IRRegister](s"could not find $name in parent environments of block $blockID")
           } yield reg
       }
     } yield reg
+
+    private def debug: BlockLocal[Unit] = for {
+      _ <- save
+      irGenState <- StateT.liftF(Lowering.get)
+      _ = IRProgram(BasicBlockID(0), irGenState.blocks).display()
+    } yield ()
 
     def lower(ast: AST): BlockLocal[IRRegister] = ast match {
       case int: AST.Integer => for {
@@ -326,7 +353,7 @@ object Lowering {
           next
         ))): BlockLocal[BasicBlockID]
         _ <- lowerBlock(consequent, List(br.consequent), List())
-        _ <- alternative.traverse(alt => lowerBlock(alt._1, List(alt._2), List()))
+        _ <- alternative.traverse_(alt => lowerBlock(alt._1, List(alt._2), List()))
         jmpToNext = Continuation.Unconditional(Continuation.Target(next, noParams))
         _ <- redirect(consequent, jmpToNext)
         _ <- alternative.traverse_(alt => redirect(alt._1, jmpToNext))
@@ -337,7 +364,14 @@ object Lowering {
       case _: AST.For => ???
       case _: AST.Break => ???
       case _: AST.Continue => ???
-      case ret: AST.Return => lower(ret.value) // TODO
+      case ret: AST.Return => for {
+        reg <- lower(ret.value)
+        _ <- endWith[Unit](_ => pure((
+          Continuation.Return(reg),
+          CallingConvention.Unrestricted(),
+          ()
+        )))
+      } yield IRRegister.NoReg()
       case bin: AST.BinaryOp => for {
         a <- lower(bin.left)
         b <- lower(bin.right)
@@ -359,13 +393,11 @@ object Lowering {
         _ <- emit(IRNode.BinOp(reg, op, l, r))
       } yield reg
       case as: AST.Assignment => for {
-        reg <- fresh
         target <- as.lvalue match {
           case id: AST.Identifier => pure(id.name)
           case _ => ???
         }
-        rv <- lower(as.rvalue)
-        _ <- emit(IRNode.Copy(reg, rv))
+        reg <- lower(as.rvalue)
         _ <- bind(target, reg)
       } yield reg
       case _: AST.UnaryOp => ???
@@ -409,6 +441,6 @@ object Lowering {
     paramRegs = params.zipWithIndex.map {
       case ((name, typ), index) => name -> IRRegister.Param(index, typ)
     }
-    _ <- local.runS(BlockLocal.State(blockID, CallingConvention.Unrestricted(), paramRegs.toMap, Nil))
+    _ <- local.runS(BlockLocal.State(blockID, Nil, CallingConvention.Unrestricted(), paramRegs.toMap, Nil))
   } yield ()
 }

@@ -1,7 +1,7 @@
 package me.viluon.tinyc
 package codegen
 
-import ir.{IRNode, IRProgram, IRRegister}
+import ir.{IRProgram, IRRegister}
 
 trait Target {
   type Code

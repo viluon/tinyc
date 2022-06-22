@@ -13,8 +13,8 @@ import cats.syntax.all._
 sealed trait Continuation[B, L] {
   import ir.Continuation.Target
 
-  def callees: Set[L] = targets.map(_.callee)
-  def targets: Set[Target[B, L]]
+  def callees: List[L] = targets.map(_.callee)
+  def targets: List[Target[B, L]]
   def mapTargets[F[_]](f: Target[B, L] => F[Target[B, L]])(implicit ev: Monad[F]): F[Continuation[B, L]]
 }
 
@@ -23,7 +23,7 @@ object Continuation {
 
   case class Branch[B, L](condition: B, consequent: Target[B, L], alternative: Target[B, L])
     extends Continuation[B, L] {
-    override def targets: Set[Target[B, L]] = Set(consequent, alternative)
+    override def targets: List[Target[B, L]] = List(consequent, alternative)
 
     override def mapTargets[F[_]](f: Target[B, L] => F[Target[B, L]])(implicit ev: Monad[F]): F[Continuation[B, L]] = for {
       con <- f(consequent)
@@ -32,16 +32,23 @@ object Continuation {
   }
 
   case class Unconditional[B, L](next: Target[B, L]) extends Continuation[B, L] {
-    override def targets: Set[Target[B, L]] = Set(next)
+    override def targets: List[Target[B, L]] = List(next)
 
     override def mapTargets[F[_]](f: Target[B, L] => F[Target[B, L]])(implicit ev: Monad[F]): F[Continuation[B, L]] =
       f(next).map(Unconditional(_))
   }
 
-  case class Halt[B, L]() extends Continuation[B, L] {
-    override def targets: Set[Target[B, L]] = Set()
+  case class Return[B, L](value: B) extends Continuation[B, L] {
+    override def targets: List[Target[B, L]] = List()
 
     override def mapTargets[F[_]](f: Target[B, L] => F[Target[B, L]])(implicit ev: Monad[F]): F[Continuation[B, L]] =
-      (this: Continuation[B, L]).pure
+      ev.pure(this)
+  }
+
+  case class Halt[B, L]() extends Continuation[B, L] {
+    override def targets: List[Target[B, L]] = List()
+
+    override def mapTargets[F[_]](f: Target[B, L] => F[Target[B, L]])(implicit ev: Monad[F]): F[Continuation[B, L]] =
+      ev.pure(this)
   }
 }
