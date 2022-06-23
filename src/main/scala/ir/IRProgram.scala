@@ -18,7 +18,7 @@ case class IRProgram[B](entry: IRNode.BasicBlockID, blocks: Map[IRNode.BasicBloc
       case Continuation.Halt() => Nil
     })
 
-    val body = successors(entry).map(blocks(_)).map(_.toDot(nameOf))
+    val body = linearizedBlocks.map(_.toDot(nameOf))
     DotGraph.Digraph(
       Set(nameOf(this) -> Map("shape" -> "diamond", "label" -> "start")) ++ body.map {
         case DotGraph.Subgraph(name, nodes, edges, props) =>

@@ -2,7 +2,7 @@ package me.viluon.tinyc
 package ir
 
 import bindings.AST
-import ir.IRNode.BasicBlockID
+import ir.IRNode.{BasicBlockID, BlockOps}
 import ir.IRType.IRInt
 
 import cats.data.StateT
@@ -68,7 +68,8 @@ object Lowering {
         case Some(id) => pure(id)
         case None => crash(s"no main function found")
       }
-      entryBlock = IRNode.Block(entry, Nil, Map(), Nil, Continuation.Unconditional(Continuation.Target(main, Nil))): BasicBlock
+      dummyReg <- fresh
+      entryBlock = IRNode.Block(entry, Nil, Map(), List(IRNode.Call(dummyReg, main, List())), Continuation.Halt())
       _ <- submitBlock(entryBlock)
       state <- get
     } yield IRProgram(entry, state.blocks)
@@ -419,9 +420,11 @@ object Lowering {
         (Continuation.Halt()/*TODO???*/, CallingConvention.Unrestricted(), ())
       ))
     } yield ()
-    paramRegs = params.zipWithIndex.map {
+    paramsInScope = params.zipWithIndex.map {
       case ((name, typ), index) => name -> IRRegister.Param(index, typ)
     }
-    _ <- local.runS(BlockLocal.State(IRNode.Block(blockID, Nil, paramRegs.toMap, Nil, Continuation.Halt())))
+    _ <- local.runS(BlockLocal.State(
+      IRNode.Block(blockID, params.map(_._2), paramsInScope.toMap, Nil, Continuation.Halt())
+    ))
   } yield ()
 }

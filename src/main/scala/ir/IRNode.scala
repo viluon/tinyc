@@ -5,11 +5,12 @@ import DotGraph.{Digraph, Subgraph}
 
 sealed trait IRNode[Binding] {
   def toDot(nameOf: Any => String): DotGraph = {
+    def controlFlowEdge(a: String, b: String, props: DotGraph.Props = Map()): DotGraph.Edge =
+      (a, b, Map("color" -> "lightslateblue") ++ props)
+
     val name = nameOf(this)
     this match {
       case IRNode.Block(id, params, env, body, cont, callingConvention) =>
-        def controlFlowEdge(a: String, b: String, props: DotGraph.Props = Map()): DotGraph.Edge =
-          (a, b, Map("color" -> "lightslateblue") ++ props)
         val name = nameOf(id)
         val spine = body.map(nameOf(_)).sliding(2).toList.flatMap {
           case List(_) => List()
@@ -51,20 +52,20 @@ sealed trait IRNode[Binding] {
           Digraph(Set(name -> Map("label" -> s"$target ← KInt $k")))
         case IRNode.BinOp(target, op, l, r) =>
           Digraph(Set(
-            name -> Map("label" -> s"$target ← BinOp($op)"),
+            name -> Map("label" -> s"$target ← $l $op $r)"),
             nameOf(l) -> Map("label" -> l.toString),
             nameOf(r) -> Map("label" -> r.toString),
           ), Set(
             (nameOf(l), name, Map()),
             (nameOf(r), name, Map()),
           ))
-        case IRNode.Copy(target, source) =>
+        case IRNode.Call(target, callee, args) =>
           Digraph(Set(
-            name -> Map("label" -> s"$target ← $source"),
-            nameOf(source) -> Map("label" -> source.toString),
-          ), Set(
-            (nameOf(source), name, Map()),
-          ))
+            name -> Map("label" -> s"$target ← Call($callee)"),
+            ("entry_" + nameOf(callee)) -> Map("label" -> callee.toString),
+          ), args.map(nameOf(_)).zipWithIndex.map {
+            case (arg, i) => (arg, name, Map("label" -> s"arg$i"))
+          }.toSet + controlFlowEdge("entry_" + nameOf(callee), name))
       }
     }
   }
@@ -83,9 +84,15 @@ object IRNode {
                      ) extends IRNode[B] {
     def successors: List[BasicBlockID] = body.flatMap {
       case KInt(_, _) |
-           BinOp(_, _, _, _) |
-           Copy(_, _) => List()
+           BinOp(_, _, _, _) => List()
+      case Call(_, callee, _) => List(callee)
     } ++ cont.callees
+  }
+
+  implicit class BlockOps(block: Block[IRRegister]) {
+    def paramRegs: List[IRRegister] = block.params.zipWithIndex.map {
+      case (typ, i) => IRRegister.Param(i, typ)
+    }
   }
 
   sealed trait IRExpression[B] extends IRNode[B] {
@@ -97,5 +104,5 @@ object IRNode {
 
   case class KInt[B](target: B, k: Int) extends IRExpression[B]
   case class BinOp[B](target: B, op: BinaryOperator, l: B, r: B) extends IRExpression[B]
-  case class Copy[B](target: B, source: B) extends IRExpression[B]
+  case class Call[B](target: B, callee: BasicBlockID, args: List[B]) extends IRExpression[B]
 }

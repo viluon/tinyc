@@ -28,10 +28,16 @@ object Tiny86 extends Target {
       } yield id -> last
     ).map(_.toMap)
       .foldMap(programBuilder)
-      .run(BuilderState())
+      .run(BuilderState(blocks = program.blocks))
       .value
 
-    state.patched -> findOutputRegister(program, last.filter(_._2.nonEmpty).flatMap(p => p._2.map(p._1 -> _)))
+    val (assembled, instrs) = state.patched
+    println(instrs.zipWithIndex.map {
+      case (instr, i) => f"$i%03d: $instr"
+    }.mkString("\n"))
+    val outputReg = findOutputRegister(program, last.filter(_._2.nonEmpty).flatMap(p => p._2.map(p._1 -> _)))
+    println(s"output register: $outputReg")
+    assembled -> outputReg
   }
 
   /**
@@ -50,15 +56,18 @@ object Tiny86 extends Target {
                            blockStart: Map[BasicBlockID, Label] = Map(),
                            openedBlocks: List[BasicBlockID] = List(),
                            allocatedRegisters: Map[IRRegister, MachineReg] = Map(),
+                           blocks: Map[BasicBlockID, IRNode.Block[IRRegister]],
                            regCtr: Int = 0,
+                           instrs: Int = 0,
                          ) {
-    lazy val patched: Program = {
+    lazy val patched: (Program, List[Instruction]) = {
       patchTable.foreach {
         case (label, id) =>
           println(s"patching $label -> $id (${blockStart(id)})")
           builder.patch(label, blockStart(id))
       }
-      builder.program()
+      val prog = builder.program()
+      prog -> (0 until instrs).map(prog.at(_)).toList
     }
   }
 
@@ -77,10 +86,10 @@ object Tiny86 extends Target {
     private def builder[A](f: ProgramBuilder => A): State[BuilderState, A] = State.get.map(f compose (_.builder))
 
     override def apply[A](fa: CodegenOps[A]): State[BuilderState, A] = {
-      println(fa)
       fa match {
-        case CodegenOps.Add(instr) => for {
+        case CodegenOps.Emit(instr) => for {
           label <- builder(_.add(instr))
+          _ <- modify(s => s.copy(instrs = s.instrs + 1) -> ())
           // set the start label of all opened blocks to the just added instruction
           _ <- modify(state => (state.openedBlocks match {
             case Nil => state
@@ -100,6 +109,10 @@ object Tiny86 extends Target {
           State.get.map(_.allocatedRegisters.get(reg))
         case CodegenOps.Patch(label, id) =>
           modify(s => s.copy(patchTable = s.patchTable + (label -> id)) -> ())
+        case CodegenOps.RawPatch(label, target) =>
+          builder(_.patch(label, target))
+        case CodegenOps.GetBlock(id) =>
+          State.get.map(_.blocks(id))
       }
     }
   }
