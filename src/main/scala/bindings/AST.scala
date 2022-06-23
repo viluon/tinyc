@@ -89,6 +89,7 @@ object AST {
     lazy val params: List[(tinyc.Symbol, me.viluon.tinyc.Type)] =
       unvector(foreign.getArgs).map(p => p.getSecond.getName -> p.getFirst.nativeType)
     lazy val returnType: me.viluon.tinyc.Type = foreign.getTypeDecl.nativeType
+    lazy val name: java.lang.String = foreign.getName.name()
   }
   implicit val eqForeignASTFunDecl: Eq[tinyc.ASTFunDecl] = Eq.fromUniversalEquals
   implicit val eqFunDecl: Eq[FunDecl] = semiauto.eq

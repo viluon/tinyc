@@ -22,6 +22,10 @@ object AbstractCodegen {
     case class Alloc(reg: IRRegister, mReg: MachineReg) extends CodegenOps[Unit]
     case class Lookup(reg: IRRegister) extends CodegenOps[Option[MachineReg]]
     case class Patch(label: Label, id: BasicBlockID) extends CodegenOps[Unit]
+    // TODO this is effectively only needed by the interpreter (well, by whatever's running it).
+    //  A modular (datatypes à la carte) free monad would allow for separation of concerns, where we mix this
+    //  and possibly other commands in only where they're needed, while the interpreter supports the entire DSL.
+    case class StartBlock(id: BasicBlockID) extends CodegenOps[Unit]
 
     // smart constructors
     def pure[A](x: A): Generator[A] = cats.Monad[Generator].pure(x)
@@ -42,5 +46,6 @@ object AbstractCodegen {
       } yield mReg
     }
     def patch(label: Label, id: BasicBlockID): Generator[Unit] = Free.liftF(Patch(label, id))
+    def startBlock(id: BasicBlockID): Generator[Unit] = Free.liftF(StartBlock(id))
   }
 }

@@ -34,23 +34,6 @@ object Lowering {
       - so Map[IRRegister, BasicBlockID]
   */
 
-  /*
-  FIXME: outstanding issues:
-    - we can't just do seq.body.traverse(lower) and the like – the BB *has to* end with a continuation
-      and it can't contain control flow inside
-      consider
-        if A then
-          B;
-        else
-          C;
-        D;
-      the result should be
-        A-B
-         \ \
-          C-D
-      so we'd like to start lowering A, lower B and C in the meantime, then end A and switch to lowering D
-   */
-
   case class IRGenState(
                          regCtr: Int,
                          blockCtr: Int,
@@ -69,19 +52,26 @@ object Lowering {
 
   def lowerTopLevel(ast: AST): IRGen[IRProgram[IRRegister]] = ast match {
     case b: AST.Block => for {
-      blockIds <- b.stmts.traverse {
+      entry <- freshBlockID
+      functionBlocks <- b.stmts.traverse {
         case fn: AST.FunDecl => for {
           id <- freshBlockID
           params = fn.params.map {
             case (symbol, typ) => symbol.name() -> IRType.from(typ)
           }
           _ <- lowerBlock(id, fn.body.stmts, params, CallingConvention.Function())
-        } yield id
+        } yield fn.name -> id
         case invalid =>
           throw new IllegalStateException(s"$invalid (of ${invalid.getClass}) is unsupported at the top level")
       }
+      main <- functionBlocks.toMap.get("main") match {
+        case Some(id) => pure(id)
+        case None => crash(s"no main function found")
+      }
+      entryBlock = IRNode.Block(entry, Nil, Map(), Nil, Continuation.Unconditional(Continuation.Target(main, Nil))): BasicBlock
+      _ <- submitBlock(entryBlock)
       state <- get
-    } yield IRProgram(blockIds.head, state.blocks)
+    } yield IRProgram(entry, state.blocks)
     case _ => crash(s"top level must be a block, which $ast certainly isn't")
   }
 
@@ -103,10 +93,10 @@ object Lowering {
     _ <- put(state.copy(blockCtr = blockCtr + 1))
   } yield BasicBlockID(blockCtr)
 
-  private def submitBlock(blockID: BasicBlockID, block: BasicBlock): IRGen[Unit] = for {
+  private def submitBlock(block: BasicBlock): IRGen[Unit] = for {
     state <- get
     blocks = state.blocks
-    _ <- put(state.copy(blocks = blocks + (blockID -> block)))
+    _ <- put(state.copy(blocks = blocks + (block.id -> block)))
   } yield ()
 
   private def mapBlock(id: BasicBlockID, fn: BasicBlock => IRGen[BasicBlock]): IRGen[Unit] = for {
@@ -129,6 +119,8 @@ object Lowering {
    */
   private def parentsOf(blockID: BasicBlockID): IRGen[Set[BasicBlockID]] = for {
     s <- get
+    // TODO this needs a change to support calls, where
+    //  for the callee of a call continuation we add the return block to the parents
     parents = s.blocks.filter(_._2.cont.callees.contains(blockID))
   } yield parents.keySet
 
@@ -188,7 +180,7 @@ object Lowering {
     } yield s.block
     private def put(n: State): BlockLocal[Unit] = for {
       block <- get
-      _ <- StateT.liftF(Lowering.submitBlock(block.id, block))
+      _ <- StateT.liftF(Lowering.submitBlock(block))
       _ <- StateT.set(n): BlockLocal[Unit]
     } yield ()
     private def modify(f: State => State): BlockLocal[Unit] = StateT.modify(f)
@@ -223,7 +215,7 @@ object Lowering {
       (cont, callConv, a) = r
       // update the current block to have the desired continuation
       finishedBlock = block.copy(body = block.body.reverse, cont = cont)
-      _ <- StateT.liftF(submitBlock(finishedBlock.id, finishedBlock))
+      _ <- StateT.liftF(submitBlock(finishedBlock))
       // update the fresh block's calling convention as desired by f
       _ <- modify(shapeless.lens[State].block.callingConvention.set(_)(callConv))
     } yield a
@@ -235,30 +227,20 @@ object Lowering {
      * @param id   The ID of the basic block to scan for successors
      * @param cont The continuation to replace found continuations with
      */
-    private def redirect(id: BasicBlockID, cont: Cont): BlockLocal[Unit] = {
-      def successors(i: BasicBlockID): BlockLocal[Set[BasicBlockID]] = for {
+    private def redirect(id: BasicBlockID, cont: Cont): BlockLocal[Unit] = new GraphTraversal[BlockLocal, BasicBlockID, Unit] {
+      override def successors(node: BasicBlockID): BlockLocal[Set[BasicBlockID]] = for {
         s <- StateT.liftF(Lowering.get)
-      } yield s.blocks(i).cont.callees.toSet
+      } yield s.blocks(node).cont.callees.toSet
 
-      case class DfsState(visited: Set[BasicBlockID], stack: List[BasicBlockID])
-      DfsState(Set(), List(id)).tailRecM(dfs => dfs.stack match {
-        case head :: tail =>
-          for {
-            succs <- successors(head)
-            _ <- if (succs.isEmpty /*leaf*/ )
-              StateT.liftF(Lowering.modify(
-                shapeless.lens[IRGenState].blocks.modify(_)(blocks =>
-                  // replace the continuation
-                  // sadly, shapelens don't work across indices
-                  blocks + (head -> blocks(head).copy(cont = cont))
-                )
-              )): BlockLocal[Unit]
-            else pure(())
-            newSuccessors = succs.removedAll(dfs.visited)
-          } yield Left(DfsState(dfs.visited + head, newSuccessors.toList ++ tail))
-        case Nil => pure(Right(()))
-      })
-    }
+      override def visit(node: BasicBlockID): BlockLocal[Option[Unit]] = pure(None)
+      override def leaf(node: BasicBlockID): BlockLocal[Option[Unit]] = StateT.liftF(Lowering.modify(
+        shapeless.lens[IRGenState].blocks.modify(_)(blocks =>
+          // replace the continuation
+          // sadly, shapelens don't work across indices
+          blocks + (node -> blocks(node).copy(cont = cont))
+        )
+      )).map(_ => None)
+    }.dfs(id).map(_ => ())
 
     private def lowerBlock(id: BasicBlockID, stmts: List[AST], params: List[(String, IRType)]): BlockLocal[Unit] = for {
       // we first need to make sure the progress so far is visible to other computations
@@ -268,15 +250,6 @@ object Lowering {
       _ <- StateT.liftF(Lowering.lowerBlock(id, stmts, params))
       _ = println(s"lower pop ($id)")
     } yield ()
-
-    /**
-     * The set of immediate predecessors of the current basic block.
-     * A basic block may be its own parent.
-     */
-    private def parents: BlockLocal[Set[BasicBlockID]] = for {
-      block <- get
-      parents <- StateT.liftF(parentsOf(block.id))
-    } yield parents
 
     private def lookup(name: String): BlockLocal[IRRegister] = for {
       block <- get

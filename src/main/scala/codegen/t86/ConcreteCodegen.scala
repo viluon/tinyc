@@ -2,7 +2,7 @@ package me.viluon.tinyc
 package codegen.t86
 
 import ir.IRNode._
-import ir.{BinaryOperator, Continuation, IRRegister}
+import ir.{BinaryOperator, CallingConvention, Continuation, IRRegister}
 
 import cats.syntax.all._
 
