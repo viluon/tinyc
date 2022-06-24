@@ -8,8 +8,9 @@ import tiny86.{Program, Register, Target}
 abstract class E2ETest extends AnyFlatSpec {
   def pipe(@Language(value = "JAVA", prefix = "class Foo { ", suffix = " }")
            code: String,
-           debugMode: Boolean = false
-          ): Pipeline = Pipeline(code, "", codegen.Tiny86, debugMode)
+           debugMode: Boolean = false,
+           optPasses: Int = 0,
+          ): Pipeline = Pipeline(code, "", codegen.Tiny86, debugMode, optPasses)
 
   def exec(pipe: Pipeline): Long = {
     import scala.jdk.CollectionConverters._

@@ -19,13 +19,19 @@ object Lattice {
   def ⊤[E](implicit l: Lattice[E]): E = l.top
   def ⊥[E](implicit l: Lattice[E]): E = l.bot
 
-  sealed trait FlatLat[A]
+  sealed trait FlatLat[A] {
+    def map[B](f: A => B): FlatLat[B] = this match {
+      case FlatLat.Top() => FlatLat.Top()
+      case FlatLat.Bot() => FlatLat.Bot()
+      case FlatLat.Mid(x) => FlatLat.Mid(f(x))
+    }
+  }
   object FlatLat {
     case class Top[A]() extends FlatLat[A] {
-      override def toString: String = "T"
+      override def toString: String = "⊤"
     }
     case class Bot[A]() extends FlatLat[A] {
-      override def toString: String = "_|_"
+      override def toString: String = "⊥"
     }
     case class Mid[A](x: A) extends FlatLat[A]
   }
@@ -65,13 +71,12 @@ object Lattice {
     }
   }
 
-  def mapLat[A, B](s: Iterable[A], l: Lattice[B]): Lattice[Map[A, B]] = new Lattice[Map[A, B]] {
-    private implicit def lat: Lattice[B] = l
-    override val top: Map[A, B] = s.map(_ -> l.top).toMap
-    override val bot: Map[A, B] = s.map(_ -> l.bot).toMap
-    override def lub(a: Map[A, B], b: Map[A, B]): Map[A, B] = a.transform((k, x) => x ⊔ b(k))
-    override def glb(a: Map[A, B], b: Map[A, B]): Map[A, B] = a.transform((k, x) => x ⊓ b(k))
-    override def leq(a: Map[A, B], b: Map[A, B]): Boolean = a.forall { case (k, x) => x ⊑ b(k) }
+  def mapLat[A, B](s: Iterable[A], l: A => Lattice[B]): Lattice[Map[A, B]] = new Lattice[Map[A, B]] {
+    override val top: Map[A, B] = s.map(a => a -> l(a).top).toMap
+    override val bot: Map[A, B] = s.map(a => a -> l(a).bot).toMap
+    override def lub(a: Map[A, B], b: Map[A, B]): Map[A, B] = a.transform((k, x) => l(k).lub(x, b(k)))
+    override def glb(a: Map[A, B], b: Map[A, B]): Map[A, B] = a.transform((k, x) => l(k).glb(x, b(k)))
+    override def leq(a: Map[A, B], b: Map[A, B]): Boolean = a.forall { case (k, x) => l(k).leq(x, b(k)) }
   }
 
   sealed trait LiftLat[A]

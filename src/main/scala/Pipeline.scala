@@ -7,11 +7,14 @@ import ir.Lowering.{IRGenState, lowerTopLevel}
 import tinyc.Frontend
 
 import scala.util.Try
+import cats.syntax.all._
+import me.viluon.tinyc.opt.Optimisation
 
 case class Pipeline(src: String,
                     fileName: String = "",
                     target: Target = Tiny86,
-                    debugMode: Boolean = false
+                    debugMode: Boolean = false,
+                    optPasses: Int = 0,
                    ) {
   import bindings.ASTBridge.ForeignASTBridgeOps
 
@@ -36,6 +39,10 @@ case class Pipeline(src: String,
       println("\n\n")
     } else ()
     _ = println(ir.toDot)
+    _ = println(s"\n optimising $optPasses times")
+    ir <- (0 until optPasses).foldLeft(Try(ir)) {
+      case (acc, _) => acc.flatMap(Optimisation.optimise)
+    }
     code = target.emit(ir)
   } yield code
 }

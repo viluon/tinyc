@@ -4,6 +4,13 @@ package e2e
 class ControlFlowTest extends E2ETest {
   import org.scalatest.matchers.should.Matchers._
 
+  // TODO for today:
+  //  - inlining (of calls)
+  //  - merging of blocks joined by unconditional jumps
+  //  - constant analysis
+  //  - strength reduction
+  // maybe it was stupid of me to create IRRegister.Param separately btw
+
   "The compiler" should "support if statements" in {
     exec(pipe(
       """int main() {
@@ -25,6 +32,20 @@ class ControlFlowTest extends E2ETest {
         |  return x;
         |}
         |""".stripMargin
+    )) shouldBe 42
+  }
+
+  it should "optimise constant comparisons" in {
+    exec(pipe(
+      """int main() {
+        |  int x = 3;
+        |  if (x > 2) {
+        |    x = 42;
+        |  }
+        |  return x;
+        |}
+        |""".stripMargin,
+      optPasses = 10
     )) shouldBe 42
   }
 
@@ -74,5 +95,17 @@ class ControlFlowTest extends E2ETest {
         |  return x;
         |}""".stripMargin
     )) shouldBe 10
+
+    exec(pipe(
+      """int main() {
+        |  int x = 0;
+        |  while (x < 10) {
+        |    if (x >= 5) {
+        |      x = x + 1;
+        |    }
+        |  }
+        |  return x;
+        |}""".stripMargin
+    )) shouldBe 5
   }
 }
