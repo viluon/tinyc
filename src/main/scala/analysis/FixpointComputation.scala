@@ -15,16 +15,17 @@ object FixpointComputation {
 
     def fixpoint(program: IRProgram[IRRegister], initialState: ProgramState = programLat.bot): ProgramState = {
       def join(node: Node, state: BlockState)(implicit cfg: IRNode.Block[IRRegister], nl: Lattice[AbstractEnv]): AbstractEnv = {
-        val predecessors = cfg.body.take(node._2) // FIXME only valid for forward analysis,
-                                                  //  though I guess inverting the IR just reverses block bodies
+        val predecessors = cfg.body.take(node._2._2) // FIXME only valid for forward analysis,
+                                                     //  though I guess inverting the IR just reverses block bodies
         predecessors.zipWithIndex.foldLeft(⊥[AbstractEnv]) {
-          case (env, pred) => env ⊔ state(pred)
+          case (env, pred) => env ⊔ state(node._1 -> pred)
         }
       }
 
       def step(prevProgState: ProgramState): ProgramState = program.blocks.foldLeft(prevProgState) {
         case (progState, (blockID, cfg)) =>
-          progState.updated(blockID, cfg.body.zipWithIndex.foldLeft(progState(blockID)) { case (state, node) =>
+          progState.updated(blockID, cfg.body.zipWithIndex.foldLeft(progState(blockID)) { case (state, n) =>
+            val node = blockID -> n
             implicit val nl: Lattice[AbstractEnv] = nodeLat(node)
             state.updated(node, state(node) ⊔ transfer(node, join(node, state)(cfg, nl)))
           })

@@ -93,6 +93,12 @@ object IRNode {
     def paramRegs: List[IRRegister] = block.params.zipWithIndex.map {
       case (typ, i) => IRRegister.Param(i, typ)
     }
+
+    def accessedRegs: List[IRRegister] = block.body.map(_.target) ++ block.body.flatMap {
+      case KInt(_, _) => Nil
+      case BinOp(_, _, l, r) => List(l, r)
+      case Call(_, _, args) => args
+    }
   }
 
   sealed trait IRExpression[B] extends IRNode[B] {

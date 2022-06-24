@@ -11,7 +11,7 @@ trait DataFlowAnalysis {
   type BlockState = Map[Node, AbstractEnv]
   type ProgramState = Map[BasicBlockID, BlockState]
   type Expr = IRExpression[IRRegister]
-  type Node = (Expr, Int)
+  type Node = (BasicBlockID, (Expr, Int))
 
   def vLat: Lattice[AbstractValue]
   def nodeLat(node: Node): Lattice[AbstractEnv]
@@ -35,8 +35,12 @@ object DataFlowAnalysis {
     override type AbstractValue = E
     private lazy val ir: IRProgram[IRRegister] = if (forward) _ir else ???
 
-    override implicit def nodeLat(node: Node): Lattice[AbstractEnv] = Lattice.mapLat(???, _ => vLat)
-    override implicit def blockLat(fn: BasicBlockID): Lattice[BlockState] = Lattice.mapLat(ir.blocks(fn).body.zipWithIndex, nodeLat)
+    override implicit def nodeLat(node: Node): Lattice[AbstractEnv] = {
+      val block = ir.blocks(node._1)
+      Lattice.mapLat(block.accessedRegs, _ => vLat)
+    }
+    override implicit def blockLat(blockID: BasicBlockID): Lattice[BlockState] =
+      Lattice.mapLat(ir.blocks(blockID).body.zipWithIndex.map(blockID -> _), nodeLat)
     override implicit lazy val programLat: Lattice[ProgramState] = Lattice.mapLat(ir.blocks.keys, blockLat)
     override def forward: Boolean = _forward
     override def must: Boolean = _must

@@ -45,7 +45,7 @@ class ControlFlowTest extends E2ETest {
         |  return x;
         |}
         |""".stripMargin,
-      optPasses = 10
+      optPasses = 1
     )) shouldBe 42
   }
 
@@ -95,17 +95,5 @@ class ControlFlowTest extends E2ETest {
         |  return x;
         |}""".stripMargin
     )) shouldBe 10
-
-    exec(pipe(
-      """int main() {
-        |  int x = 0;
-        |  while (x < 10) {
-        |    if (x >= 5) {
-        |      x = x + 1;
-        |    }
-        |  }
-        |  return x;
-        |}""".stripMargin
-    )) shouldBe 5
   }
 }

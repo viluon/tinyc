@@ -3,12 +3,11 @@ package me.viluon.tinyc
 import codegen.{Target, Tiny86}
 import ir.IRNode.BasicBlockID
 import ir.Lowering.{IRGenState, lowerTopLevel}
+import opt.Simplifier
 
 import tinyc.Frontend
 
 import scala.util.Try
-import cats.syntax.all._
-import me.viluon.tinyc.opt.Optimisation
 
 case class Pipeline(src: String,
                     fileName: String = "",
@@ -39,10 +38,11 @@ case class Pipeline(src: String,
       println("\n\n")
     } else ()
     _ = println(ir.toDot)
-    _ = println(s"\n optimising $optPasses times")
+    _ = println(s"\n simplifying $optPasses times")
     ir <- (0 until optPasses).foldLeft(Try(ir)) {
-      case (acc, _) => acc.flatMap(Optimisation.optimise)
+      case (acc, _) => acc.flatMap(Simplifier.optimise)
     }
+    _ = println("after optimisation:\n" + ir.toDot)
     code = target.emit(ir)
   } yield code
 }

@@ -22,6 +22,6 @@ class ConstantAnalysis(ir: IRProgram[IRRegister])
   }
 
   def transfer(node: Node, env: AbstractEnv): AbstractEnv = node match {
-    case (expr, _) => env.updated(expr.target, eval(env, expr))
+    case (_, (expr, _)) => env.updated(expr.target, eval(env, expr))
   }
 }
