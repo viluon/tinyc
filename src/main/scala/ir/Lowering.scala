@@ -129,24 +129,56 @@ object Lowering {
     s <- get
     block = s.blocks(blockID)
     _ = println(s"looking for $name in $block")
+    parents <- parentsOf(blockID)
     mbReg <- block.env.get(name) match {
       case Some(reg) => pure(Some(reg))
-      case None => forwardVariable(blockID, name, visited)
+      case None => forwardVariable(blockID, parents, name, visited)
     }
   } yield mbReg
 
-  private def forwardVariable(blockID: BasicBlockID, name: String, visited: Set[BasicBlockID] = Set()): IRGen[Option[IRRegister]] = for {
-    // find the variable in all predecessors
-    // TODO use the parents here, forward the variable through parameter lists
-    //  (adding it to envs), error if not found (empty unvisited parents)
-    // TODO this should check that the calling convention of the block allows such extensions (functions typically don't)
-    parents <- parentsOf(blockID)
-    p = parents.removedAll(visited)
+  private def forwardVariable(
+                               blockID: BasicBlockID,
+                               parents: Set[BasicBlockID],
+                               name: String,
+                               visited: Set[BasicBlockID] = Set()
+                             ): IRGen[Option[IRRegister]] =
+    for {
+      // find the variable in all predecessors
+      // TODO this should check that the calling convention of the block allows such extensions (functions typically don't)
+      _ <- pure(())
+      p = parents.removedAll(visited)
+      // look the name up in each parent
+      locations <- p.toList.traverse(id => lookupOrForward(id, name, visited + id).map(_.map(id -> _)))
+      // short-circuit if any of the lookups failed
+      mbLocations = if (locations.nonEmpty) locations.sequence else None
+      mbReg <- mbLocations.map(variableLocations =>
+        for {
+          // extend the arg list at each callsite with the register containing the requested variable
+          _ <- variableLocations.traverse_ {
+            case (id, reg) => mapContinuation(id, cont => cont.mapTargets {
+              case Continuation.Target(callee, args)
+                if callee == blockID => pure(Continuation.Target(callee, args :+ reg))
+              case t => pure(t)
+            })
+          }
+          // extend the parameter list of this block by one
+          typ = IRType.IRInt() // FIXME/TODO this needs to take type info into account!
+          s <- get
+          param = IRRegister.Param(s.blocks(blockID).params.size, typ)
+          _ <- mapBlock(blockID, block => pure(
+            block.copy(params = block.params :+ typ, env = block.env + (name -> param))
+          ))
+        } yield param
+      ).sequence
+    } yield mbReg
+
+  // FIXME: this is a total hack
+  private def addMissingParam(blockID: BasicBlockID, name: String, p: Set[BasicBlockID], visited: Set[BasicBlockID] = Set()): IRGen[Unit] = for {
     // look the name up in each parent
     locations <- p.toList.traverse(id => lookupOrForward(id, name, visited + id).map(_.map(id -> _)))
     // short-circuit if any of the lookups failed
     mbLocations = if (locations.nonEmpty) locations.sequence else None
-    mbReg <- mbLocations.map(variableLocations =>
+    _ <- mbLocations.map(variableLocations =>
       for {
         // extend the arg list at each callsite with the register containing the requested variable
         _ <- variableLocations.traverse_ {
@@ -156,17 +188,9 @@ object Lowering {
             case t => pure(t)
           })
         }
-        // extend the parameter list of this block by one
-        typ = IRType.IRInt() // FIXME/TODO this needs to take type info into account!
-        s <- get
-        param = IRRegister.Param(s.blocks(blockID).params.size, typ)
-        _ <- mapBlock(blockID, block => pure(
-          block.copy(params = block.params :+ typ, env = block.env + (name -> param))
-        ))
-      } yield param
+      } yield ()
     ).sequence
-  } yield mbReg
-
+  } yield ()
 
   object BlockLocal {
     /**
@@ -256,9 +280,10 @@ object Lowering {
       block <- get
       blockID = block.id
       _ = println(s"lookup $name in $blockID")
+      parents <- StateT.liftF(Lowering.parentsOf(blockID))
       mbReg <- (block.env.get(name) match {
         case Some(reg) => pure(Some(reg))
-        case None => StateT.liftF(forwardVariable(blockID, name))
+        case None => StateT.liftF(forwardVariable(blockID, parents, name))
       }): BlockLocal[Option[IRRegister]]
       // very important: the global block map has been updated, we need to fetch the changes
       irGenState <- StateT.liftF(Lowering.get)
@@ -318,30 +343,9 @@ object Lowering {
       case fn: AST.FunDecl => lower(fn.body) // TODO
       case _: AST.StructDecl => ???
       case _: AST.FunPtrDecl => ???
-      case br: AST.If => for {
-        cond <- lower(br.condition)
-        consequent <- freshBlockID
-        alternative <- br.alternative.traverse(alt => freshBlockID.map(_ -> alt))
-        noParams = List[IRRegister]()
-        next <- endWith(next => pure((
-          Continuation.Branch(
-            cond,
-            Continuation.Target(consequent, noParams),
-            alternative
-              .map(alt => Continuation.Target(alt._1, noParams))
-              .getOrElse(Continuation.Target(next, noParams))
-          ),
-          CallingConvention.Unrestricted(),
-          next
-        ))): BlockLocal[BasicBlockID]
-        _ <- lowerBlock(consequent, List(br.consequent), List())
-        _ <- alternative.traverse_(alt => lowerBlock(alt._1, List(alt._2), List()))
-        jmpToNext = Continuation.Unconditional(Continuation.Target(next, noParams))
-        _ <- redirect(consequent, jmpToNext)
-        _ <- alternative.traverse_(alt => redirect(alt._1, jmpToNext))
-      } yield IRRegister.NoReg()
+      case br: AST.If => lowerIfStmt(br)
       case _: AST.Switch => ???
-      case _: AST.While => ???
+      case loop: AST.While => lowerWhileLoop(loop)
       case _: AST.DoWhile => ???
       case _: AST.For => ???
       case _: AST.Break => ???
@@ -394,6 +398,71 @@ object Lowering {
       case _: AST.Write => ???
       case _: AST.Read => ???
     }
+
+    private def lowerIfStmt(br: AST.If): BlockLocal[IRRegister] = for {
+      cond <- lower(br.condition)
+      consequent <- freshBlockID
+      alternative <- br.alternative.traverse(alt => freshBlockID.map(_ -> alt))
+      noParams = List[IRRegister]()
+      next <- endWith(next => pure((
+        Continuation.Branch(
+          cond,
+          Continuation.Target(consequent, noParams),
+          alternative
+            .map(alt => Continuation.Target(alt._1, noParams))
+            .getOrElse(Continuation.Target(next, noParams))
+        ),
+        CallingConvention.Unrestricted(),
+        next
+      ))): BlockLocal[BasicBlockID]
+      _ <- lowerBlock(consequent, List(br.consequent), List())
+      _ <- alternative.traverse_(alt => lowerBlock(alt._1, List(alt._2), List()))
+      jmpToNext = Continuation.Unconditional(Continuation.Target(next, noParams))
+      _ <- redirect(consequent, jmpToNext)
+      _ <- alternative.traverse_(alt => redirect(alt._1, jmpToNext))
+    } yield IRRegister.NoReg()
+
+    private def lowerWhileLoop(loop: AST.While): BlockLocal[IRRegister] = for {
+      _ <- pure(())
+      noParams = List[IRRegister]()
+      // end whatever block we'be been working with and start a block for the condition
+      cond <- endWith[BasicBlockID](cond => pure((
+        Continuation.Unconditional(Continuation.Target(cond, noParams)),
+        CallingConvention.Unrestricted(),
+        cond
+      )))
+      // submit a dummy for the condition
+      _ <- StateT.liftF(submitBlock(IRNode.Block(cond, Nil, Map(), Nil, Continuation.Halt())))
+      condReg <- lower(loop.condition)
+      body <- freshBlockID
+      jmpToCond = Continuation.Unconditional(Continuation.Target(cond, noParams))
+      // submit a dummy for the body
+      _ <- StateT.liftF(submitBlock(IRNode.Block(body, Nil, Map(), Nil, jmpToCond)))
+      // end the condition block
+      _ <- endWith[Unit](next => pure((
+        Continuation.Branch(
+          condReg,
+          // execute the body if the condition is true
+          Continuation.Target(body, noParams),
+          // otherwise, jump past it
+          Continuation.Target(next, noParams),
+        ),
+        CallingConvention.Unrestricted(),
+        ()
+      )))
+      _ <- lowerBlock(body, List(loop.body), List())
+      _ <- redirect(body, jmpToCond)
+      condBlock <- StateT.liftF(Lowering.get.map(_.blocks(cond))): BlockLocal[BasicBlock]
+      bodyBlock <- StateT.liftF(Lowering.get.map(_.blocks(body)))
+      condCallers <- StateT.liftF(parentsOf(cond))
+      // FIXME may be a problem with calls (included in successors)
+      bodyLeaves = condCallers.filter(bodyBlock.successors.contains)
+      _ <- condBlock.env.toList.map(_._1).traverse_(name => StateT.liftF(
+        // FIXME apart from being a disgusting, horrendous, fragile hack,
+        //  this also relies on the ordering of keys in the env map
+        addMissingParam(cond, name, condCallers)
+      )): BlockLocal[Unit]
+    } yield IRRegister.NoReg()
   }
 
   /**

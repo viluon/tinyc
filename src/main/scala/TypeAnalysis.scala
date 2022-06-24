@@ -100,7 +100,15 @@ object TypeAnalysis {
       _ <- br.alternative.traverse(analyse)
     } yield NativeType.Unit()
     case _: AST.Switch => ???
-    case _: AST.While => ???
+    case loop: AST.While => for {
+      t <- analyse(loop.condition)
+      _ <- expect(
+        t === NativeType.Int(),
+        s"While statements can only branch on integers, not on $t",
+        loop.condition.loc
+      )
+      _ <- analyse(loop.body)
+    } yield NativeType.Unit()
     case _: AST.DoWhile => ???
     case _: AST.For => ???
     case _: AST.Break => ???

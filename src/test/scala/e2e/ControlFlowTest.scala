@@ -63,4 +63,16 @@ class ControlFlowTest extends E2ETest {
         |}""".stripMargin
     )) shouldBe 42
   }
+
+  it should "support while loops" in {
+    exec(pipe(
+      """int main() {
+        |  int x = 0;
+        |  while (x < 10) {
+        |    x = x + 1;
+        |  }
+        |  return x;
+        |}""".stripMargin
+    )) shouldBe 10
+  }
 }

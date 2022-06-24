@@ -114,7 +114,10 @@ object AST {
   implicit val eqForeignASTSwitch: Eq[tinyc.ASTSwitch] = Eq.fromUniversalEquals
   implicit val eqSwitch: Eq[Switch] = semiauto.eq
 
-  case class While(foreign: tinyc.ASTWhile) extends AST
+  case class While(foreign: tinyc.ASTWhile) extends AST {
+    lazy val condition: AST = foreign.getCond.wrapped
+    lazy val body: AST = foreign.getBody.wrapped
+  }
   implicit val eqForeignASTWhile: Eq[tinyc.ASTWhile] = Eq.fromUniversalEquals
   implicit val eqWhile: Eq[While] = semiauto.eq
 
